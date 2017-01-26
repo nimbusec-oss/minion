@@ -18,6 +18,9 @@ func init() {
 	gob.Register(Principal{})
 }
 
+// PrincipalKey is the key used for the principal in the user session.
+const PrincipalKey = "__principal__"
+
 // ErrorFormat defines as which content type an error should be serialized
 type ErrorFormat string
 
@@ -31,64 +34,59 @@ const (
 // Minion implements basic building blocks that most http servers require
 type Minion struct {
 	Debug       bool
-	Sessions    sessions.Store
-	SessionName string
-	Templates   *template.Template
 	LoginURL    string
 	ErrorFormat ErrorFormat
+
+	sessions    sessions.Store
+	sessionName string
+	templates   *template.Template
 }
 
 // NewMinion creates a new minion instance.
 func NewMinion(sessionName string, sessionKey []byte) Minion {
 	return Minion{
 		Debug:       os.Getenv("DEBUG") == "true",
-		Sessions:    sessions.NewCookieStore(sessionKey),
-		SessionName: sessionName,
 		LoginURL:    "/login",
 		ErrorFormat: ErrorAsHTML,
+
+		sessions:    sessions.NewCookieStore(sessionKey),
+		sessionName: sessionName,
 	}
 }
 
-// GetSessionValue retrieves a value from the active user session.
-func (m Minion) GetSessionValue(w http.ResponseWriter, r *http.Request, name string) (interface{}, error) {
-	session, err := m.Sessions.Get(r, m.SessionName)
+// Get retrieves a value from the active session. If the value does not
+// exist in the session, a provided default is returned
+func (m Minion) Get(w http.ResponseWriter, r *http.Request, name string, def interface{}) interface{} {
+	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
-		return nil, err
+		return def
 	}
-
-	return session.Values[name], nil
+	value, ok := session.Values[name]
+	if !ok {
+		return def
+	}
+	return value
 }
 
-// GetPrincipal returns the currently logged in principal
-func (m Minion) GetPrincipal(w http.ResponseWriter, r *http.Request) Principal {
-	obj, err := m.GetSessionValue(w, r, "principal")
+// Set stores a value in the active session.
+func (m Minion) Set(w http.ResponseWriter, r *http.Request, name string, value interface{}) {
+	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
-		return Principal{}
+		return
 	}
 
-	principal, _ := obj.(Principal)
-	return principal
+	session.Values[name] = value
+	session.Save(r, w)
 }
 
-// StorePrincipal stores a principal in the current browser session.
-func (m Minion) StorePrincipal(w http.ResponseWriter, r *http.Request, principal Principal) error {
-	session, err := m.Sessions.Get(r, m.SessionName)
-	if err != nil {
-		return err
-	}
-
-	session.Values["principal"] = principal
-	return session.Save(r, w)
-}
-
-// ClearPrincipal removes the principal from the current browser session.
-func (m Minion) ClearPrincipal(w http.ResponseWriter, r *http.Request) error {
-	session, err := m.Sessions.Get(r, m.SessionName)
+// Delete removes a value from the active session.
+func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) error {
+	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
 		return err
 	}
 
-	delete(session.Values, "principal")
+	delete(session.Values, name)
 	return session.Save(r, w)
 }
 
@@ -96,9 +94,9 @@ func (m Minion) ClearPrincipal(w http.ResponseWriter, r *http.Request) error {
 // the request is forwarded to the secured handler.
 func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		principal := m.GetPrincipal(w, r)
+		principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
 		if !principal.Authenticated {
-			session, err := m.Sessions.Get(r, m.SessionName)
+			session, err := m.sessions.Get(r, m.sessionName)
 			if err != nil {
 				m.Error(w, r, http.StatusBadRequest, err)
 				return
@@ -160,7 +158,7 @@ func (m Minion) JSON(w http.ResponseWriter, r *http.Request, code int, data inte
 // some default variables into the template scope.
 func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name string, data V) {
 	// reload templates in debug mode
-	if m.Templates == nil || m.Debug {
+	if m.templates == nil || m.Debug {
 		fm := template.FuncMap{
 			"div": func(dividend, divisor int) float64 {
 				return float64(dividend) / float64(divisor)
@@ -186,7 +184,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 		}
 
 		var err error
-		m.Templates, err = template.New("").Funcs(fm).ParseGlob("templates/*")
+		m.templates, err = template.New("").Funcs(fm).ParseGlob("templates/*")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "failed to parse templates: %v", err)
@@ -195,17 +193,17 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 		}
 	}
 
-	session, err := m.Sessions.Get(r, m.SessionName)
+	session, err := m.sessions.Get(r, m.sessionName)
 	if err == nil {
 		data["flashes"] = session.Flashes()
 		session.Save(r, w)
 	}
 
-	principal := m.GetPrincipal(w, r)
+	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
 	data["principal"] = principal
 
 	w.Header().Add("content-type", "text/html; charset=utf-8")
-	err = m.Templates.ExecuteTemplate(w, name, data)
+	err = m.templates.ExecuteTemplate(w, name, data)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "failed to execute template %q: %v", name, err)
