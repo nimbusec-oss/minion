@@ -18,8 +18,13 @@ func init() {
 	gob.Register(Principal{})
 }
 
-// PrincipalKey is the key used for the principal in the user session.
-const PrincipalKey = "__principal__"
+const (
+	// PrincipalKey is the key used for the principal in the user session.
+	PrincipalKey = "_principal"
+
+	// RedirectKey is the key used for the original URL before redirecting to the login site.
+	RedirectKey = "_redirect"
+)
 
 // ErrorFormat defines as which content type an error should be serialized
 type ErrorFormat string
@@ -31,9 +36,15 @@ const (
 	ErrorAsJSON ErrorFormat = "json"
 )
 
+// Logger is a simple interface to describe something that can write log output.
+type Logger interface {
+	Printf(fmt string, v ...interface{})
+}
+
 // Minion implements basic building blocks that most http servers require
 type Minion struct {
 	Debug       bool
+	Logger      Logger
 	LoginURL    string
 	ErrorFormat ErrorFormat
 
@@ -46,6 +57,7 @@ type Minion struct {
 func NewMinion(sessionName string, sessionKey []byte) Minion {
 	return Minion{
 		Debug:       os.Getenv("DEBUG") == "true",
+		Logger:      log.New(os.Stderr, "", log.LstdFlags),
 		LoginURL:    "/login",
 		ErrorFormat: ErrorAsHTML,
 
@@ -90,6 +102,29 @@ func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) erro
 	return session.Save(r, w)
 }
 
+// AddFlash adds a flash message to the session.
+func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface{}) error {
+	session, err := m.sessions.Get(r, m.sessionName)
+	if err != nil {
+		return err
+	}
+
+	session.AddFlash(value)
+	return session.Save(r, w)
+}
+
+// Flashes returns a slice of flash messages from the session.
+func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) ([]interface{}, error) {
+	session, err := m.sessions.Get(r, m.sessionName)
+	if err != nil {
+		return nil, err
+	}
+
+	flashes := session.Flashes()
+	err = session.Save(r, w)
+	return flashes, err
+}
+
 // Secured requires that the user has at least one of the provided roles before
 // the request is forwarded to the secured handler.
 func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
@@ -102,7 +137,7 @@ func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 				return
 			}
 
-			session.Values["redirect"] = r.URL.String()
+			session.Values[RedirectKey] = r.URL.String()
 			err = session.Save(r, w)
 			if err != nil {
 				m.Error(w, r, http.StatusInternalServerError, err)
@@ -150,7 +185,7 @@ func (m Minion) JSON(w http.ResponseWriter, r *http.Request, code int, data inte
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "failed to encode json: %v", err)
-		log.Printf("failed to encode json: %v", err)
+		m.Logger.Printf("failed to encode json: %v", err)
 	}
 }
 
@@ -188,26 +223,23 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "failed to parse templates: %v", err)
-			log.Printf("failed to parse templates: %v", err)
+			m.Logger.Printf("failed to parse templates: %v", err)
 			return
 		}
 	}
 
-	session, err := m.sessions.Get(r, m.sessionName)
-	if err == nil {
-		data["flashes"] = session.Flashes()
-		session.Save(r, w)
-	}
+	flashes, _ := m.Flashes(w, r)
+	data["flashes"] = flashes
 
 	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
 	data["principal"] = principal
 
 	w.Header().Add("content-type", "text/html; charset=utf-8")
-	err = m.templates.ExecuteTemplate(w, name, data)
+	err := m.templates.ExecuteTemplate(w, name, data)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "failed to execute template %q: %v", name, err)
-		log.Printf("failed to execute template %q: %v", name, err)
+		m.Logger.Printf("failed to execute template %q: %v", name, err)
 		return
 	}
 }
