@@ -242,7 +242,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 		}
 	}
 
-	flashes, _ := m.Flashes(w, r)
+	flashes := m.Flashes(w, r)
 	data["flashes"] = flashes
 
 	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
