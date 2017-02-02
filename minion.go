@@ -88,41 +88,55 @@ func (m Minion) Set(w http.ResponseWriter, r *http.Request, name string, value i
 	}
 
 	session.Values[name] = value
-	session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		m.Logger.Printf("set value: session save: %v", err)
+	}
 }
 
 // Delete removes a value from the active session.
-func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) error {
+func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) {
 	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
-		return err
+		return
 	}
 
 	delete(session.Values, name)
-	return session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		m.Logger.Printf("delete value: session save: %v", err)
+	}
 }
 
 // AddFlash adds a flash message to the session.
-func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface{}) error {
+func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface{}) {
 	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
-		return err
+		return
 	}
 
 	session.AddFlash(value)
-	return session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		m.Logger.Printf("add flash: session save: %v", err)
+	}
 }
 
 // Flashes returns a slice of flash messages from the session.
-func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) ([]interface{}, error) {
+func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) []interface{} {
 	session, err := m.sessions.Get(r, m.sessionName)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	flashes := session.Flashes()
 	err = session.Save(r, w)
-	return flashes, err
+	if err != nil {
+		m.Logger.Printf("get flashes: session save: %v", err)
+		return nil
+	}
+
+	return flashes
 }
 
 // Secured requires that the user has at least one of the provided roles before
