@@ -49,7 +49,9 @@ type Logger interface {
 	Printf(fmt string, v ...interface{})
 }
 
-type MinionOption func(Minion) Minion
+// Option is a functional configuration type that can be used to tailor
+// the Minion instance during creation.
+type Option func(Minion) Minion
 
 // Minion implements basic building blocks that most http servers require
 type Minion struct {
@@ -82,7 +84,7 @@ type Minion struct {
 }
 
 // NewMinion creates a new minion instance.
-func NewMinion(options ...MinionOption) Minion {
+func NewMinion(options ...Option) Minion {
 	m := Minion{
 		Debug:  os.Getenv("DEBUG") == "true",
 		Logger: log.New(os.Stderr, "", log.LstdFlags),
@@ -106,7 +108,7 @@ func NewMinion(options ...MinionOption) Minion {
 }
 
 // Session can be used in the NewMinion function to add an secure cookie based session.
-func Session(name string, key []byte) MinionOption {
+func Session(name string, key []byte) Option {
 	return func(m Minion) Minion {
 		m.sessions = sessions.NewCookieStore(key)
 		m.sessionName = name
