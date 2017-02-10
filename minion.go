@@ -51,7 +51,7 @@ type Logger interface {
 
 // Option is a functional configuration type that can be used to tailor
 // the Minion instance during creation.
-type Option func(Minion) Minion
+type Option func(*Minion) *Minion
 
 // Minion implements basic building blocks that most http servers require
 type Minion struct {
@@ -85,7 +85,7 @@ type Minion struct {
 
 // NewMinion creates a new minion instance.
 func NewMinion(options ...Option) Minion {
-	m := Minion{
+	m := &Minion{
 		Debug:  os.Getenv("DEBUG") == "true",
 		Logger: log.New(os.Stderr, "", log.LstdFlags),
 
@@ -104,12 +104,12 @@ func NewMinion(options ...Option) Minion {
 		m = option(m)
 	}
 
-	return m
+	return *m
 }
 
 // Session can be used in the NewMinion function to add an secure cookie based session.
 func Session(name string, key []byte) Option {
-	return func(m Minion) Minion {
+	return func(m *Minion) *Minion {
 		m.sessions = sessions.NewCookieStore(key)
 		m.sessionName = name
 		return m
@@ -218,7 +218,7 @@ func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 }
 
 // defaultUnauthorizedHandler is the default handler for minion.Unauthorized
-func (m Minion) defaultUnauthorizedHandler(w http.ResponseWriter, r *http.Request) {
+func (m *Minion) defaultUnauthorizedHandler(w http.ResponseWriter, r *http.Request) {
 	session, err := m.openSession(w, r)
 	if err != nil {
 		m.Error(w, r, http.StatusBadRequest, err)
@@ -236,12 +236,12 @@ func (m Minion) defaultUnauthorizedHandler(w http.ResponseWriter, r *http.Reques
 }
 
 // defaultForbiddenHandler is the default handler for minion.Forbidden
-func (m Minion) defaultForbiddenHandler(w http.ResponseWriter, r *http.Request) {
+func (m *Minion) defaultForbiddenHandler(w http.ResponseWriter, r *http.Request) {
 	m.HTML(w, r, http.StatusForbidden, m.ForbiddenTemplate, V{})
 }
 
 // defaultErrorHandler is the default handler for minion.Error
-func (m Minion) defaultErrorHandler(w http.ResponseWriter, r *http.Request, code int, err error) {
+func (m *Minion) defaultErrorHandler(w http.ResponseWriter, r *http.Request, code int, err error) {
 	m.Logger.Printf("error: %v", err)
 	m.HTML(w, r, code, m.ErrorTemplate, V{
 		"code":  code,
