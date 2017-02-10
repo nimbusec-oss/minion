@@ -36,40 +36,97 @@ const (
 	ErrorAsJSON ErrorFormat = "json"
 )
 
+const (
+	// TemplatePrincipalKey is the name templates can use to access the principal
+	TemplatePrincipalKey = "principal"
+
+	// TemplateFlashesKey is the name templates can use to access flash messages
+	TemplateFlashesKey = "flashes"
+)
+
 // Logger is a simple interface to describe something that can write log output.
 type Logger interface {
 	Printf(fmt string, v ...interface{})
 }
 
+type MinionOption func(Minion) Minion
+
 // Minion implements basic building blocks that most http servers require
 type Minion struct {
-	Debug       bool
-	Logger      Logger
-	LoginURL    string
-	ErrorFormat ErrorFormat
+	Debug  bool
+	Logger Logger
+
+	// Unauthorized is called for Secured handlers where no authenticated
+	// principal is found in the current session. The default handler will
+	// redirect the user to `UnauthorizedURL` and store the original URL
+	// in the session.
+	Unauthorized    func(w http.ResponseWriter, r *http.Request)
+	UnauthorizedURL string
+
+	// Forbidden is called for Secured handlers where an authenticated principal
+	// does not have enough permission to view the resource. The default handler
+	// will execute the HTML template `ForbiddenTemplate`.
+	Forbidden         func(w http.ResponseWriter, r *http.Request)
+	ForbiddenTemplate string
+
+	// Error is called for any error that occur during the request processing, be
+	// it client side errors (4xx status) or server side errors (5xx status). The
+	// default handler wirr execute the HTML template `ErrorTemplate`.
+	Error         func(w http.ResponseWriter, r *http.Request, code int, err error)
+	ErrorTemplate string
 
 	sessions    sessions.Store
 	sessionName string
-	templates   *template.Template
+
+	templates *template.Template
 }
 
 // NewMinion creates a new minion instance.
-func NewMinion(sessionName string, sessionKey []byte) Minion {
-	return Minion{
-		Debug:       os.Getenv("DEBUG") == "true",
-		Logger:      log.New(os.Stderr, "", log.LstdFlags),
-		LoginURL:    "/login",
-		ErrorFormat: ErrorAsHTML,
+func NewMinion(options ...MinionOption) Minion {
+	m := Minion{
+		Debug:  os.Getenv("DEBUG") == "true",
+		Logger: log.New(os.Stderr, "", log.LstdFlags),
 
-		sessions:    sessions.NewCookieStore(sessionKey),
-		sessionName: sessionName,
+		UnauthorizedURL:   "/login",
+		ErrorTemplate:     "500.html",
+		ForbiddenTemplate: "403.html",
 	}
+
+	// default handlers
+	m.Unauthorized = m.defaultUnauthorizedHandler
+	m.Forbidden = m.defaultForbiddenHandler
+	m.Error = m.defaultErrorHandler
+
+	// apply functional configuration
+	for _, option := range options {
+		m = option(m)
+	}
+
+	return m
+}
+
+// Session can be used in the NewMinion function to add an secure cookie based session.
+func Session(name string, key []byte) MinionOption {
+	return func(m Minion) Minion {
+		m.sessions = sessions.NewCookieStore(key)
+		m.sessionName = name
+		return m
+	}
+}
+
+func (m Minion) openSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
+	if m.sessions == nil {
+		return nil, errors.New("no session store configured")
+	}
+
+	session, err := m.sessions.Get(r, m.sessionName)
+	return session, err
 }
 
 // Get retrieves a value from the active session. If the value does not
 // exist in the session, a provided default is returned
 func (m Minion) Get(w http.ResponseWriter, r *http.Request, name string, def interface{}) interface{} {
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.openSession(w, r)
 	if err != nil {
 		return def
 	}
@@ -82,7 +139,7 @@ func (m Minion) Get(w http.ResponseWriter, r *http.Request, name string, def int
 
 // Set stores a value in the active session.
 func (m Minion) Set(w http.ResponseWriter, r *http.Request, name string, value interface{}) {
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.openSession(w, r)
 	if err != nil {
 		return
 	}
@@ -96,7 +153,7 @@ func (m Minion) Set(w http.ResponseWriter, r *http.Request, name string, value i
 
 // Delete removes a value from the active session.
 func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) {
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.openSession(w, r)
 	if err != nil {
 		return
 	}
@@ -110,7 +167,7 @@ func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) {
 
 // AddFlash adds a flash message to the session.
 func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface{}) {
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.openSession(w, r)
 	if err != nil {
 		return
 	}
@@ -124,7 +181,7 @@ func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface
 
 // Flashes returns a slice of flash messages from the session.
 func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) []interface{} {
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.openSession(w, r)
 	if err != nil {
 		return nil
 	}
@@ -145,25 +202,12 @@ func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
 		if !principal.Authenticated {
-			session, err := m.sessions.Get(r, m.sessionName)
-			if err != nil {
-				m.Error(w, r, http.StatusBadRequest, err)
-				return
-			}
-
-			session.Values[RedirectKey] = r.URL.String()
-			err = session.Save(r, w)
-			if err != nil {
-				m.Error(w, r, http.StatusInternalServerError, err)
-				return
-			}
-
-			http.Redirect(w, r, m.LoginURL, http.StatusSeeOther)
+			m.Unauthorized(w, r)
 			return
 		}
 
 		if !principal.HasAnyRole(roles...) {
-			m.HTML(w, r, http.StatusForbidden, "403.html", V{})
+			m.Forbidden(w, r)
 			return
 		}
 
@@ -171,23 +215,36 @@ func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 	}
 }
 
-// Error outputs an error using the default error format (HTML with template
-// "error.html" or JSON).
-func (m Minion) Error(w http.ResponseWriter, r *http.Request, code int, err error) {
-	log.Printf("error: %v", err)
-	switch m.ErrorFormat {
-	case ErrorAsHTML:
-		m.HTML(w, r, code, "error.html", V{
-			"code":  code,
-			"error": err.Error(),
-		})
-
-	case ErrorAsJSON:
-		m.JSON(w, r, code, V{
-			"code":  code,
-			"error": err.Error(),
-		})
+// defaultUnauthorizedHandler is the default handler for minion.Unauthorized
+func (m Minion) defaultUnauthorizedHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := m.openSession(w, r)
+	if err != nil {
+		m.Error(w, r, http.StatusBadRequest, err)
+		return
 	}
+
+	session.Values[RedirectKey] = r.URL.String()
+	err = session.Save(r, w)
+	if err != nil {
+		m.Error(w, r, http.StatusInternalServerError, err)
+		return
+	}
+
+	http.Redirect(w, r, m.UnauthorizedURL, http.StatusSeeOther)
+}
+
+// defaultForbiddenHandler is the default handler for minion.Forbidden
+func (m Minion) defaultForbiddenHandler(w http.ResponseWriter, r *http.Request) {
+	m.HTML(w, r, http.StatusForbidden, m.ForbiddenTemplate, V{})
+}
+
+// defaultErrorHandler is the default handler for minion.Error
+func (m Minion) defaultErrorHandler(w http.ResponseWriter, r *http.Request, code int, err error) {
+	m.Logger.Printf("error: %v", err)
+	m.HTML(w, r, code, m.ErrorTemplate, V{
+		"code":  code,
+		"error": err.Error(),
+	})
 }
 
 // JSON outputs the data encoded as JSON.
@@ -243,10 +300,10 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 	}
 
 	flashes := m.Flashes(w, r)
-	data["flashes"] = flashes
+	data[TemplateFlashesKey] = flashes
 
 	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
-	data["principal"] = principal
+	data[TemplatePrincipalKey] = principal
 
 	w.Header().Add("content-type", "text/html; charset=utf-8")
 	err := m.templates.ExecuteTemplate(w, name, data)
@@ -258,7 +315,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 	}
 }
 
-// Principal is an entity that is authenticated and verified.
+// Principal is an entity that can be authenticated and verified.
 type Principal struct {
 	Authenticated bool
 	ID            string
