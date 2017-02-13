@@ -108,9 +108,12 @@ func NewMinion(options ...Option) Minion {
 }
 
 // Session can be used in the NewMinion function to add an secure cookie based session.
-func Session(name string, key []byte) Option {
+func Session(name string, key []byte, options *sessions.Options) Option {
 	return func(m *Minion) *Minion {
-		m.sessions = sessions.NewCookieStore(key)
+		store := sessions.NewCookieStore(key)
+		store.Options = options
+
+		m.sessions = store
 		m.sessionName = name
 		return m
 	}
