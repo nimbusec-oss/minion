@@ -150,10 +150,6 @@ func (m Minion) Set(w http.ResponseWriter, r *http.Request, name string, value i
 	}
 
 	session.Values[name] = value
-	err = session.Save(r, w)
-	if err != nil {
-		m.Logger.Printf("set value: session save: %v", err)
-	}
 }
 
 // Delete removes a value from the active session.
@@ -164,10 +160,6 @@ func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	delete(session.Values, name)
-	err = session.Save(r, w)
-	if err != nil {
-		m.Logger.Printf("delete value: session save: %v", err)
-	}
 }
 
 // AddFlash adds a flash message to the session.
@@ -178,10 +170,6 @@ func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface
 	}
 
 	session.AddFlash(value)
-	err = session.Save(r, w)
-	if err != nil {
-		m.Logger.Printf("add flash: session save: %v", err)
-	}
 }
 
 // Flashes returns a slice of flash messages from the session.
@@ -192,13 +180,21 @@ func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) []interface{} {
 	}
 
 	flashes := session.Flashes()
-	err = session.Save(r, w)
+	return flashes
+}
+
+func (m Minion) SaveSession(w http.ResponseWriter, r *http.Request) {
+	session, err := m.openSession(w, r)
 	if err != nil {
-		m.Logger.Printf("get flashes: session save: %v", err)
-		return nil
+		m.Logger.Printf("session open: %v", err)
+		return
 	}
 
-	return flashes
+	err = session.Save(r, w)
+	if err != nil {
+		m.Logger.Printf("session save: %v", err)
+		return
+	}
 }
 
 // Secured requires that the user has at least one of the provided roles before
@@ -254,6 +250,7 @@ func (m *Minion) defaultErrorHandler(w http.ResponseWriter, r *http.Request, cod
 
 // JSON outputs the data encoded as JSON.
 func (m Minion) JSON(w http.ResponseWriter, r *http.Request, code int, data interface{}) {
+	m.SaveSession(w, r)
 	w.Header().Add("content-type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 
@@ -310,7 +307,10 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
 	data[TemplatePrincipalKey] = principal
 
+	m.SaveSession(w, r)
 	w.Header().Add("content-type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+
 	err := m.templates.ExecuteTemplate(w, name, data)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
