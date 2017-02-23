@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gorilla/sessions"
@@ -303,8 +305,22 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 			},
 		}
 
-		var err error
-		m.templates, err = template.New("").Funcs(fm).ParseGlob("templates/*")
+		m.templates = template.New("").Funcs(fm)
+		err := filepath.Walk("./templates", func(path string, info os.FileInfo, err error) error {
+			if !info.IsDir() {
+				b, err := ioutil.ReadFile(path)
+				if err != nil {
+					return err
+				}
+
+				m.templates, err = m.templates.
+					New(strings.TrimPrefix(path, "templates/")).
+					Parse(string(b))
+				return err
+			}
+			return nil
+		})
+
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "failed to parse templates: %v", err)
