@@ -323,6 +323,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 // Principal is an entity that can be authenticated and verified.
 type Principal struct {
 	Authenticated bool
+	TwoFactor     bool
 	ID            string
 	Login         string
 	Roles         string
