@@ -162,6 +162,18 @@ func (m Minion) Delete(w http.ResponseWriter, r *http.Request, name string) {
 	delete(session.Values, name)
 }
 
+// ClearSession removes all values from the active session.
+func (m Minion) ClearSession(w http.ResponseWriter, r *http.Request) {
+	session, err := m.openSession(w, r)
+	if err != nil {
+		return
+	}
+
+	for name := range session.Values {
+		delete(session.Values, name)
+	}
+}
+
 // AddFlash adds a flash message to the session.
 func (m Minion) AddFlash(w http.ResponseWriter, r *http.Request, value interface{}) {
 	session, err := m.openSession(w, r)
