@@ -17,7 +17,7 @@ import (
 )
 
 func init() {
-	gob.Register(Principal{})
+	gob.Register(Anonymous{})
 }
 
 const (
@@ -215,8 +215,8 @@ func (m Minion) SaveSession(w http.ResponseWriter, r *http.Request) {
 // the request is forwarded to the secured handler.
 func (m Minion) Secured(fn http.HandlerFunc, roles ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
-		if !principal.Authenticated {
+		principal := m.Get(w, r, PrincipalKey, Anonymous{}).(Principal)
+		if !principal.Authenticated() {
 			m.Unauthorized(w, r)
 			return
 		}
@@ -332,7 +332,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 	flashes := m.Flashes(w, r)
 	data[TemplateFlashesKey] = flashes
 
-	principal := m.Get(w, r, PrincipalKey, Principal{}).(Principal)
+	principal := m.Get(w, r, PrincipalKey, Anonymous{}).(Principal)
 	data[TemplatePrincipalKey] = principal
 
 	m.SaveSession(w, r)
@@ -349,34 +349,28 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 }
 
 // Principal is an entity that can be authenticated and verified.
-type Principal struct {
-	Authenticated bool
-	TwoFactor     bool
-	ID            string
-	Login         string
-	Roles         string
+type Principal interface {
+	Authenticated() bool
+	ID() string
+	HasAnyRole(roles ...string) bool
 }
 
-// HasAnyRole checks whether the principal has any of the given roles. Use '*'
-// as a wildcard role to match any.
-func (u Principal) HasAnyRole(roles ...string) bool {
-	if !u.Authenticated {
-		return false
-	}
+// Anonymous implements the Principal interface for unauthenticated
+// users and can be used as a fallback principal when none is set
+// in the current session.
+type Anonymous struct{}
 
-	dedup := make(map[string]struct{})
-	for _, role := range strings.Split(u.Roles, " ") {
-		dedup[role] = struct{}{}
-	}
+// Authenticated returns always false, because Anonymous users are not
+// authenticated.
+func (a Anonymous) Authenticated() bool { return false }
 
-	for _, role := range roles {
-		if _, ok := dedup[role]; ok || role == "*" {
-			return true
-		}
-	}
+// ID retunrs always the string `anonymous` as ID for unauthenticated
+// users.
+func (a Anonymous) ID() string { return "anonymous" }
 
-	return false
-}
+// HasAnyRole returns always false for any role, because Anonymous users
+// are not authenticated.
+func (a Anonymous) HasAnyRole(roles ...string) bool { return false }
 
 // BindingResult holds validation errors of the binding process from a HTML
 // form to a Go struct.
