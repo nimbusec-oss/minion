@@ -127,7 +127,11 @@ func (m Minion) openSession(w http.ResponseWriter, r *http.Request) (*sessions.S
 	}
 
 	session, err := m.sessions.Get(r, m.sessionName)
-	return session, err
+	if err != nil {
+		m.Logger.Printf("[warning] failed to open session, created new: %v", err)
+	}
+
+	return session, nil
 }
 
 // Get retrieves a value from the active session. If the value does not
