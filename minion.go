@@ -202,6 +202,11 @@ func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) []interface{} {
 }
 
 func (m Minion) SaveSession(w http.ResponseWriter, r *http.Request) {
+	if m.sessions == nil {
+		// bail out if no session store is configured
+		return
+	}
+
 	session, err := m.openSession(w, r)
 	if err != nil {
 		m.Logger.Printf("session open: %v", err)
