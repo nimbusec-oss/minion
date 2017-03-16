@@ -79,10 +79,10 @@ type Minion struct {
 	Error         func(w http.ResponseWriter, r *http.Request, code int, err error)
 	ErrorTemplate string
 
-	sessions    sessions.Store
-	sessionName string
+	SessionStore sessions.Store
+	SessionName  string
 
-	templates *template.Template
+	Templates *template.Template
 }
 
 // NewMinion creates a new minion instance.
@@ -115,18 +115,18 @@ func Session(name string, key []byte, options *sessions.Options) Option {
 		store := sessions.NewCookieStore(key)
 		store.Options = options
 
-		m.sessions = store
-		m.sessionName = name
+		m.SessionStore = store
+		m.SessionName = name
 		return m
 	}
 }
 
 func (m Minion) openSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	if m.sessions == nil {
+	if m.SessionStore == nil {
 		return nil, errors.New("no session store configured")
 	}
 
-	session, err := m.sessions.Get(r, m.sessionName)
+	session, err := m.SessionStore.Get(r, m.SessionName)
 	if err != nil {
 		m.Logger.Printf("[warning] failed to open session, created new: %v", err)
 	}
@@ -202,7 +202,7 @@ func (m Minion) Flashes(w http.ResponseWriter, r *http.Request) []interface{} {
 }
 
 func (m Minion) SaveSession(w http.ResponseWriter, r *http.Request) {
-	if m.sessions == nil {
+	if m.SessionStore == nil {
 		// bail out if no session store is configured
 		return
 	}
@@ -289,7 +289,7 @@ func (m Minion) JSON(w http.ResponseWriter, r *http.Request, code int, data inte
 // some default variables into the template scope.
 func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name string, data V) {
 	// reload templates in debug mode
-	if m.templates == nil || m.Debug {
+	if m.Templates == nil || m.Debug {
 		fm := template.FuncMap{
 			"div": func(dividend, divisor int) float64 {
 				return float64(dividend) / float64(divisor)
@@ -314,7 +314,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 			},
 		}
 
-		m.templates = template.New("").Funcs(fm)
+		m.Templates = template.New("").Funcs(fm)
 		err := filepath.Walk("./templates", func(path string, info os.FileInfo, err error) error {
 			if !info.IsDir() {
 				b, err := ioutil.ReadFile(path)
@@ -322,7 +322,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 					return err
 				}
 
-				m.templates, err = m.templates.
+				m.Templates, err = m.Templates.
 					New(strings.TrimPrefix(path, "templates/")).
 					Parse(string(b))
 				return err
@@ -348,7 +348,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 	w.Header().Add("content-type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
 
-	err := m.templates.ExecuteTemplate(w, name, data)
+	err := m.Templates.ExecuteTemplate(w, name, data)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "failed to execute template %q: %v", name, err)
