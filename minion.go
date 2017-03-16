@@ -175,9 +175,8 @@ func (m Minion) ClearSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for name := range session.Values {
-		delete(session.Values, name)
-	}
+	session.Options.MaxAge = -1
+	session.Save(r, w)
 }
 
 // AddFlash adds a flash message to the session.
