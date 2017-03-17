@@ -64,7 +64,8 @@ type Minion struct {
 	Sessions    sessions.Store
 	SessionName string
 
-	Templates *template.Template
+	Templates       *template.Template
+	TemplateFuncMap template.FuncMap
 }
 
 // NewMinion creates a new minion instance.
@@ -78,6 +79,29 @@ func NewMinion(options ...Option) *Minion {
 		ForbiddenTemplate: "403.html",
 
 		Sessions: NilStore{},
+		TemplateFuncMap: template.FuncMap{
+			"div": func(dividend, divisor int) float64 {
+				return float64(dividend) / float64(divisor)
+			},
+			"json": func(v interface{}) template.JS {
+				b, _ := json.MarshalIndent(v, "", "  ")
+				return template.JS(b)
+			},
+			"dict": func(values ...interface{}) (map[string]interface{}, error) {
+				if len(values)%2 != 0 {
+					return nil, errors.New("invalid dict call")
+				}
+				dict := make(map[string]interface{}, len(values)/2)
+				for i := 0; i < len(values); i += 2 {
+					key, ok := values[i].(string)
+					if !ok {
+						return nil, errors.New("dict keys must be strings")
+					}
+					dict[key] = values[i+1]
+				}
+				return dict, nil
+			},
+		},
 	}
 
 	// default handlers
@@ -139,31 +163,7 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 }
 
 func (m *Minion) LoadTemplates() error {
-	fm := template.FuncMap{
-		"div": func(dividend, divisor int) float64 {
-			return float64(dividend) / float64(divisor)
-		},
-		"json": func(v interface{}) template.JS {
-			b, _ := json.MarshalIndent(v, "", "  ")
-			return template.JS(b)
-		},
-		"dict": func(values ...interface{}) (map[string]interface{}, error) {
-			if len(values)%2 != 0 {
-				return nil, errors.New("invalid dict call")
-			}
-			dict := make(map[string]interface{}, len(values)/2)
-			for i := 0; i < len(values); i += 2 {
-				key, ok := values[i].(string)
-				if !ok {
-					return nil, errors.New("dict keys must be strings")
-				}
-				dict[key] = values[i+1]
-			}
-			return dict, nil
-		},
-	}
-
-	m.Templates = template.New("").Funcs(fm)
+	m.Templates = template.New("").Funcs(m.TemplateFuncMap)
 	err := filepath.Walk("./templates", func(path string, info os.FileInfo, err error) error {
 		if !info.IsDir() {
 			b, err := ioutil.ReadFile(path)
