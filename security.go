@@ -26,6 +26,7 @@ func (a Anonymous) ID() string { return "anonymous" }
 // are not authenticated.
 func (a Anonymous) HasAnyRole(roles ...string) bool { return false }
 
+// GetPrincipal returns the principal from the current session.
 func (m *Minion) GetPrincipal(r *http.Request) Principal {
 	session, _ := m.Sessions.Get(r, m.SessionName)
 	principal := Default(session, PrincipalKey, Anonymous{}).(Principal)

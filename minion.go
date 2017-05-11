@@ -4,7 +4,6 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
@@ -85,7 +84,7 @@ func NewMinion(options ...Option) *Minion {
 			},
 			"json": func(v interface{}) template.JS {
 				b, _ := json.MarshalIndent(v, "", "  ")
-				return template.JS(b)
+				return template.JS(b) // nolint: gas
 			},
 			"dict": func(values ...interface{}) (map[string]interface{}, error) {
 				if len(values)%2 != 0 {
@@ -128,12 +127,8 @@ func (m *Minion) defaultErrorHandler(w http.ResponseWriter, r *http.Request, cod
 
 // JSON outputs the data encoded as JSON.
 func (m *Minion) JSON(w http.ResponseWriter, r *http.Request, code int, data interface{}) {
-	w.Header().Add("content-type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-
-	err := json.NewEncoder(w).Encode(data)
+	err := JSON(w, r, code, data)
 	if err != nil {
-		fmt.Fprintf(w, "failed to encode json: %v", err)
 		m.Logger.Printf("failed to encode json: %v", err)
 	}
 }
@@ -145,7 +140,6 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 		err := m.LoadTemplates()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, "failed to parse templates: %v", err)
 			m.Logger.Printf("failed to parse templates: %v", err)
 			return
 		}
@@ -156,12 +150,12 @@ func (m *Minion) HTML(w http.ResponseWriter, r *http.Request, code int, name str
 
 	err := m.Templates.ExecuteTemplate(w, name, data)
 	if err != nil {
-		fmt.Fprintf(w, "failed to execute template %q: %v", name, err)
 		m.Logger.Printf("failed to execute template %q: %v", name, err)
 		return
 	}
 }
 
+// LoadTemplates loads the html/template files from the filesystem.
 func (m *Minion) LoadTemplates() error {
 	m.Templates = template.New("").Funcs(m.TemplateFuncMap)
 	err := filepath.Walk("./templates", func(path string, info os.FileInfo, err error) error {
@@ -210,4 +204,16 @@ type V map[string]interface{}
 // MarshalJSON implements the json.Marshaler interface.
 func (v V) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}(v))
+}
+
+// JSON outputs the data encoded as JSON.
+func JSON(w http.ResponseWriter, r *http.Request, code int, data interface{}) error {
+	w.Header().Add("content-type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "\t")
+
+	err := enc.Encode(data)
+	return err
 }
